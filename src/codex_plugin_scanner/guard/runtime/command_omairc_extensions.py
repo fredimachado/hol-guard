@@ -29,7 +29,7 @@ from .command_rules import (
 #
 # Conservative matching covers:
 # - Standard launcher variants: omairc, omairc.exe, omairc.cmd
-# - Shell wrappers: exec omairc ..., xargs omairc ...
+# - Shell wrappers: exec omairc ..., exec -a <argv0> omairc ..., xargs omairc ...
 # - Fail-secure option parsing: unknown options still match send/raise
 # - Incomplete `omairc send` without a target still reviews
 
@@ -39,6 +39,7 @@ _OMAIRC_LAUNCHERS: tuple[tuple[str, ...], ...] = (
     ("xargs", "omairc"),
 )
 _OMAIRC_EXECUTABLES = executable_names("omairc")
+_EXEC_VALUE_OPTIONS = frozenset({"-a"})
 _NETWORK_OPTIONS_WITH_VALUES = frozenset({"--network"})
 _WRAPPER_EXECUTABLES = frozenset({"exec", "xargs"})
 
@@ -51,6 +52,8 @@ def _argument_matches_executable(argument: str, executables: frozenset[str]) -> 
 def _wrapper_leading_options_with_values(wrapper: str) -> frozenset[str]:
     if wrapper == "xargs":
         return _XARGS_VALUE_OPTIONS
+    if wrapper == "exec":
+        return _EXEC_VALUE_OPTIONS
     return frozenset()
 
 
