@@ -85,10 +85,10 @@ impl OmaircSendHelpConfig {
             .arguments
             .iter()
             .map(|argument| lowercase_for_ascii_comparison(argument))
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Vec<_>>();
         for launcher in &self.compiled_launchers {
             check_deadline(deadline)?;
-            if !ascii_comparison::executable_matches(segment, &launcher.executables)? {
+            if !ascii_comparison::executable_matches(segment, &launcher.executables) {
                 continue;
             }
             let subcommand_arguments = match launcher.wrapper.as_deref() {
@@ -97,7 +97,7 @@ impl OmaircSendHelpConfig {
                     let Some(child) = after_wrapper.first() else {
                         continue;
                     };
-                    if !argument_matches_executable(child, &omairc_executables())? {
+                    if !argument_matches_executable(child, &omairc_executables()) {
                         continue;
                     }
                     after_wrapper[1..].to_vec()
@@ -116,6 +116,23 @@ impl OmaircSendHelpConfig {
 }
 
 impl OmaircWrapperSubcommandConfig {
+    pub(crate) fn from_config(config: Value) -> Result<Self, &'static str> {
+        let config: Self = serde_json::from_value(config).map_err(|_| "invalid_specialized_matcher_config")?;
+        if !config.wrapper.is_ascii()
+            || config
+                .subcommands
+                .iter()
+                .chain(&config.options_with_values)
+                .any(|value| !value.is_ascii())
+        {
+            return Err("unsupported_specialized_unicode_config");
+        }
+        if config.subcommands.is_empty() {
+            return Err("invalid_omairc_subcommand");
+        }
+        Ok(config)
+    }
+
     pub(crate) fn matches(
         &self,
         segment: &CommandSegmentV1,
@@ -125,20 +142,20 @@ impl OmaircWrapperSubcommandConfig {
             return Ok(false);
         }
         let wrapper_executables = executable_names(&self.wrapper);
-        if !ascii_comparison::executable_matches(segment, &wrapper_executables)? {
+        if !ascii_comparison::executable_matches(segment, &wrapper_executables) {
             return Ok(false);
         }
         let arguments = segment
             .arguments
             .iter()
             .map(|argument| lowercase_for_ascii_comparison(argument))
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Vec<_>>();
         let leading_options = wrapper_leading_options(&self.wrapper);
         let after_wrapper = after_leading_options(&arguments, &leading_options);
         let Some(child) = after_wrapper.first() else {
             return Ok(false);
         };
-        if !argument_matches_executable(child, &omairc_executables())? {
+        if !argument_matches_executable(child, &omairc_executables()) {
             return Ok(false);
         }
         let subcommand_arguments = &after_wrapper[1..];
@@ -202,9 +219,9 @@ fn after_leading_options(arguments: &[String], options: &BTreeSet<String>) -> &[
     &[]
 }
 
-fn argument_matches_executable(argument: &str, executables: &BTreeSet<String>) -> Result<bool, &'static str> {
+fn argument_matches_executable(argument: &str, executables: &BTreeSet<String>) -> bool {
     let basename = argument.rsplit(['/', '\\']).next().unwrap_or(argument);
-    Ok(executables.contains(&lowercase_for_ascii_comparison(basename)?))
+    executables.contains(&lowercase_for_ascii_comparison(basename))
 }
 
 fn executable_names(name: &str) -> BTreeSet<String> {

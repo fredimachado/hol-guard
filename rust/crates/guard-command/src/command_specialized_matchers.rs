@@ -148,23 +148,9 @@ impl SpecializedMatcher {
                     .collect();
                 Ok(Self::Repo2nbExpansion(config))
             }
-            "omairc-wrapper-subcommand.v1" => {
-                let config: OmaircWrapperSubcommandConfig =
-                    serde_json::from_value(config).map_err(invalid)?;
-                if !config.wrapper.is_ascii()
-                    || config
-                        .subcommands
-                        .iter()
-                        .chain(&config.options_with_values)
-                        .any(|value| !value.is_ascii())
-                {
-                    return Err("unsupported_specialized_unicode_config");
-                }
-                if config.subcommands.is_empty() {
-                    return Err("invalid_omairc_subcommand");
-                }
-                Ok(Self::OmaircWrapperSubcommand(config))
-            }
+            "omairc-wrapper-subcommand.v1" => Ok(Self::OmaircWrapperSubcommand(
+                OmaircWrapperSubcommandConfig::from_config(config)?,
+            )),
             "omairc-send-help.v1" => Ok(Self::OmaircSendHelp(
                 OmaircSendHelpConfig::from_config(config)?,
             )),
