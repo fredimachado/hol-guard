@@ -4,14 +4,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .command_extension_matchers import executable_matcher, safe_flag_variant
+from .command_extension_matchers import executable_matcher, executable_names, safe_flag_variant
 from .command_extension_specs import CommandExtensionSpec
+from .command_launcher_floors import _XARGS_VALUE_OPTIONS
 from .command_matcher_contracts import MatcherEvidence
 from .command_model import CanonicalCommand
+from .command_option_parsing import matches_subcommands_conservatively
 from .command_rules import (
     AnyMatcher,
     CommandSafetyRule,
     CommandSafeVariant,
+    ExecutableMatcher,
     _after_leading_options,
     _segment_matches_executable,
 )
@@ -35,31 +38,114 @@ _OMAIRC_LAUNCHERS: tuple[tuple[str, ...], ...] = (
     ("exec", "omairc"),
     ("xargs", "omairc"),
 )
-_WRAPPER_LEADING_OPTIONS_WITH_VALUES = frozenset({"-n", "-P", "-I", "-L", "-s"})
+_OMAIRC_EXECUTABLES = executable_names("omairc")
 _NETWORK_OPTIONS_WITH_VALUES = frozenset({"--network"})
 _WRAPPER_EXECUTABLES = frozenset({"exec", "xargs"})
 
 
+def _argument_matches_executable(argument: str, executables: frozenset[str]) -> bool:
+    basename = argument.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return basename in executables
+
+
+def _wrapper_leading_options_with_values(wrapper: str) -> frozenset[str]:
+    if wrapper == "xargs":
+        return _XARGS_VALUE_OPTIONS
+    return frozenset()
+
+
+def _arguments_after_omairc_launcher(
+    arguments: tuple[str, ...],
+    launcher: tuple[str, ...],
+) -> tuple[str, ...] | None:
+    candidate = arguments
+    if launcher[0] in _WRAPPER_EXECUTABLES:
+        candidate = _after_leading_options(
+            candidate,
+            _wrapper_leading_options_with_values(launcher[0]),
+            frozenset(),
+        )
+        if not candidate or not _argument_matches_executable(candidate[0], _OMAIRC_EXECUTABLES):
+            return None
+        return candidate[1:]
+    return candidate
+
+
+@dataclass(frozen=True, slots=True)
+class OmaircWrapperSubcommandMatcher:
+    """Match omairc subcommands launched through exec or xargs."""
+
+    wrapper: str
+    subcommands: tuple[str, ...]
+    options_with_values: frozenset[str] = frozenset()
+    fail_secure_unknown_options: bool = True
+
+    def match(self, command: CanonicalCommand) -> tuple[MatcherEvidence, ...]:
+        evidence: list[MatcherEvidence] = []
+        wrapper_executables = executable_names(self.wrapper)
+        for index, segment in enumerate(command.segments):
+            if not _segment_matches_executable(segment, wrapper_executables):
+                continue
+            lowered_arguments = tuple(argument.lower() for argument in segment.arguments)
+            after_wrapper = _after_leading_options(
+                lowered_arguments,
+                _wrapper_leading_options_with_values(self.wrapper),
+                frozenset(),
+            )
+            if not after_wrapper or not _argument_matches_executable(after_wrapper[0], _OMAIRC_EXECUTABLES):
+                continue
+            subcommand_arguments = after_wrapper[1:]
+            if (
+                subcommand_arguments[: len(self.subcommands)] != self.subcommands
+                and (
+                    not self.fail_secure_unknown_options
+                    or not matches_subcommands_conservatively(
+                        subcommand_arguments,
+                        self.subcommands,
+                        options_with_values=self.options_with_values,
+                        known_flags=frozenset(),
+                    )
+                )
+            ):
+                continue
+            evidence.append(
+                MatcherEvidence(
+                    segment_index=index,
+                    executable=segment.executable,
+                    detail="Matched executable and structured argument constraints.",
+                )
+            )
+        return tuple(evidence)
+
+
+def _omairc_direct_matcher(*subcommands: str, options_with_values: frozenset[str] = frozenset()) -> ExecutableMatcher:
+    return executable_matcher(
+        "omairc",
+        *subcommands,
+        options_with_values=options_with_values,
+        fail_secure_unknown_options=True,
+    )
+
+
 def _omairc_matcher(*subcommands: str, options_with_values: frozenset[str] = frozenset()) -> AnyMatcher:
     return AnyMatcher(
-        matchers=tuple(
-            executable_matcher(
-                *launcher,
-                *subcommands,
-                options_with_values=options_with_values,
-                allow_leading_options=launcher[0] in _WRAPPER_EXECUTABLES,
-                leading_options_with_values=(
-                    _WRAPPER_LEADING_OPTIONS_WITH_VALUES if launcher[0] in _WRAPPER_EXECUTABLES else frozenset()
-                ),
-                fail_secure_unknown_options=True,
-            )
-            for launcher in _OMAIRC_LAUNCHERS
+        matchers=(
+            _omairc_direct_matcher(*subcommands, options_with_values=options_with_values),
+            *(
+                OmaircWrapperSubcommandMatcher(
+                    wrapper=wrapper,
+                    subcommands=subcommands,
+                    options_with_values=options_with_values,
+                )
+                for wrapper in _WRAPPER_EXECUTABLES
+            ),
         )
     )
 
 
 _OMAIRC_SEND = _omairc_matcher("send", options_with_values=_NETWORK_OPTIONS_WITH_VALUES)
 _OMAIRC_RAISE = _omairc_matcher("raise")
+_OMAIRC_RAISE_DIRECT = _omairc_direct_matcher("raise")
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,7 +159,6 @@ class OmaircSendHelpMatcher:
 
     subcommand: str = "send"
     launchers: tuple[tuple[str, ...], ...] = _OMAIRC_LAUNCHERS
-    leading_options_with_values: frozenset[str] = _WRAPPER_LEADING_OPTIONS_WITH_VALUES
     network_options: frozenset[str] = _NETWORK_OPTIONS_WITH_VALUES
 
     def match(self, command: CanonicalCommand) -> tuple[MatcherEvidence, ...]:
@@ -83,19 +168,12 @@ class OmaircSendHelpMatcher:
                 continue
             lowered_arguments = tuple(argument.lower() for argument in segment.arguments)
             for launcher in self.launchers:
-                if not _segment_matches_executable(segment, frozenset({launcher[0]})):
+                if not _segment_matches_executable(segment, executable_names(launcher[0])):
                     continue
-                candidate_arguments = lowered_arguments
-                if launcher[0] in _WRAPPER_EXECUTABLES:
-                    candidate_arguments = _after_leading_options(
-                        candidate_arguments,
-                        self.leading_options_with_values,
-                        frozenset(),
-                    )
-                prefix = (*launcher[1:], self.subcommand)
-                if candidate_arguments[: len(prefix)] != prefix:
+                subcommand_arguments = _arguments_after_omairc_launcher(lowered_arguments, launcher)
+                if subcommand_arguments is None or subcommand_arguments[:1] != (self.subcommand,):
                     continue
-                if _send_help_requested(candidate_arguments[len(prefix) :], self.network_options):
+                if _send_help_requested(subcommand_arguments[1:], self.network_options):
                     evidence.append(
                         MatcherEvidence(
                             segment_index=index,
@@ -179,7 +257,7 @@ OMAIRC_COMMAND_RULES = (
         default_mode="review",
         safe_variants=(
             safe_flag_variant(
-                _OMAIRC_RAISE,
+                AnyMatcher(matchers=(_OMAIRC_RAISE_DIRECT,)),
                 variant_id="help",
                 title="omairc raise command help",
                 flag="--help",

@@ -45,8 +45,16 @@ OMAIRC_WRAPPER_REVIEW_COMMANDS: tuple[tuple[str, str], ...] = (
     ("exec omairc send '#omarchy' hello", _SEND_RULE),
     ("xargs omairc send '#omarchy' hello", _SEND_RULE),
     ("xargs -n 1 omairc send '#omarchy' hello", _SEND_RULE),
+    ("xargs -a input.txt omairc send '#omarchy' hello", _SEND_RULE),
+    ("xargs --arg-file input.txt omairc send '#omarchy' hello", _SEND_RULE),
+    ("exec /usr/local/bin/omairc send '#omarchy' hello", _SEND_RULE),
+    ("exec omairc.exe send '#omarchy' hello", _SEND_RULE),
+    ("xargs /usr/bin/omairc send '#omarchy' hello", _SEND_RULE),
+    ("xargs omairc.cmd send '#omarchy' hello", _SEND_RULE),
     ("exec omairc raise", _RAISE_RULE),
     ("xargs omairc raise", _RAISE_RULE),
+    ("exec /usr/local/bin/omairc raise", _RAISE_RULE),
+    ("xargs omairc.exe raise", _RAISE_RULE),
 )
 
 OMAIRC_SAFE_COMMANDS: tuple[str, ...] = (
@@ -62,6 +70,8 @@ OMAIRC_SAFE_COMMANDS: tuple[str, ...] = (
     "omairc conversations",
     "omairc send --help",
     "omairc send --network abc --help",
+    "omairc.exe send --help",
+    "omairc.cmd send --help",
     "omairc raise --help",
     "omairc --help",
     "omairc --version",
